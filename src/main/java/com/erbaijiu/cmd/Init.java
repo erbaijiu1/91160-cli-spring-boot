@@ -15,13 +15,12 @@ import com.erbaijiu.util.CommonUtil;
 import io.airlift.airline.Command;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.jsoup.internal.StringUtil;
 //import org.jsoup.internal.StringUtil;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Scanner;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * @author pengpan
@@ -88,21 +87,60 @@ public class Init implements Runnable {
         log.info("");
         InitData initData = initDataEnum.getInitData();
         log.info(initData.getBanner());
-        List<Object> ids = new ArrayList<>();
+        List<String> ids = new ArrayList<>();
         List<Map<String, Object>> data = initData.getData().apply(coreService);
+        Map<String, String> idNamePairs = new HashMap<>();
+        int i = 0;
         for (Map<String, Object> datum : data) {
             String id = String.valueOf(datum.get(initData.getAttrId()));
             ids.add(id);
-            String name = StrUtil.format("[{}]. {}", id, datum.get(initData.getAttrName()));
+            String name = StrUtil.format("[{}-{}]. {}", i, id, datum.get(initData.getAttrName()));
+            idNamePairs.put(id, datum.get(initData.getAttrName()).toString());
             log.info(name);
+            i++;
         }
+
+        List<String> backList = new ArrayList<>();
+        backList.addAll(ids);
         boolean success;
+        String matchZH = ".*[\\u4E00-\\u9FA5]+.*";
         do {
             String id = null;
             while (StrUtil.isBlank(id)) {
-                System.out.print(initData.getInputTips());
-                id = in.nextLine();
+                ids.clear();
+                ids.addAll(backList);
+
+                System.out.println(initData.getInputTips() + "(输入中文将在结果中查询：)");
+                String userIn = in.nextLine();
+
+                if(null != userIn && userIn.trim().matches(matchZH)){
+                    String finalUserIn = userIn;
+                    Map<String, String> targetMap = idNamePairs.entrySet().stream().filter(p->p.getValue().contains(finalUserIn)).
+                            collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+                    ids.clear();
+                    log.info("查询结果如下，请再次选择：");
+                    targetMap.forEach((key, value) -> {
+                        ids.add(key);
+                        String outPutStr = String.format("[%d-%s:%s]", ids.size() - 1, key, value);
+                        System.out.println(outPutStr);
+                    });
+                    System.out.println();
+                    System.out.println("请重新输入编号：");
+
+                    id = in.nextLine();
+                }
+                else{
+                    id = userIn;
+                }
             }
+            if(id.matches(matchZH) || id.contains("，") || ids.isEmpty()){
+                success = false;
+                log.error("input error.id:{}, ids:{}", id, ids);
+                continue;
+            }
+//            id = ids.get(Integer.valueOf(id));
+            id = getRealIds(ids, id);
             success = checkInput(ids, id);
             if (success) {
                 initData.getStore().accept(id);
@@ -112,7 +150,13 @@ public class Init implements Runnable {
         } while (!success);
     }
 
-    private boolean checkInput(List<Object> ids, String id) {
+    private String getRealIds(List<String> ids, String id){
+        List<String> split = StrUtil.split(id, ',');
+        return split.stream()
+                .map(s->ids.get(Integer.parseInt(s))).collect(Collectors.joining(","));
+    }
+
+    private boolean checkInput(List<String> ids, String id) {
         if (CollUtil.isEmpty(ids) || StrUtil.isBlank(id)) {
             return false;
         }
